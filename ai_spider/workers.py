@@ -29,6 +29,8 @@ def anon_info(ent, **fin):
     info = ent.info
     fin["worker_version"] = info.get("worker_version")
     fin["capabilities"] = info.get("capabilities", [])
+    fin["balena_device_name"] = info.get("balena_device_name", "")
+    fin["ip"] = info.get("ip")
     nv_gpu_cnt = sum([1 for _ in info.get("nv_gpus", [])])
     cl_gpu_cnt = sum([1 for _ in info.get("cl_gpus", [])])
     web_gpu_cnt = sum([1 for _ in info.get("web_gpus", [])])
@@ -56,7 +58,7 @@ class WorkerManager:
         self.busy.pop(sock, None)
 
     @contextlib.contextmanager
-    def get_socket_for_inference(self, msize: int, worker_type: WORKER_TYPES, gpu_filter={}) \
+    def get_socket_for_inference(self, msize: int, worker_type: WORKER_TYPES, gpu_filter={}, avoid=[]) \
             -> Generator[QueueSocket, None, None]:
         # msize is params adjusted by quant level with a heuristic
 
@@ -76,11 +78,15 @@ class WorkerManager:
             good = []
             close = []
             for sock, info in self.socks.items():
+                if sock in avoid:
+                    continue
                 cpu_vram = info.get("vram", 0)
                 disk_space = info.get("disk_space", 0)
                 nv_gpu_ram = sum([el.get("memory", 0) for el in info.get("nv_gpus", [])])
                 cl_gpu_ram = sum([el.get("memory", 0) for el in info.get("cl_gpus", [])])
                 have_web_gpus = is_web_worker(info)
+                if not nv_gpu_ram and not cl_gpu_ram and not have_web_gpus:
+                    continue
 
                 if ver := gpu_filter.get("min_version"):
                     try:
@@ -118,6 +124,7 @@ class WorkerManager:
                         good.append(sock)
 
                 if worker_type in ("any", "cli"):
+                    good.append(sock)
                     if gpu_needed < nv_gpu_ram and cpu_needed < cpu_vram and disk_needed < disk_space:
                         good.append(sock)
                     elif gpu_needed < cl_gpu_ram and cpu_needed < cpu_vram and disk_needed < disk_space:
